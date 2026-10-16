@@ -5,6 +5,7 @@ import (
 	"gateway-service/api/middleware"
 	"gateway-service/internal/config"
 	"gateway-service/internal/service"
+	"github.com/abeb021/wave-connect/pkg/logger"
 	"log"
 	"net/http"
 	"os"
