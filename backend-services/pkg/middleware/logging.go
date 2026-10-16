@@ -20,7 +20,7 @@ func LoggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 			lvl = slog.LevelWarn
 		}
 		
-		logger.Log(r.Context(), lvl, "http requese",
+		logger.Log(r.Context(), lvl, "http request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", ww.status,
