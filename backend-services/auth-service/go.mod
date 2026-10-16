@@ -35,3 +35,6 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 )
+require github.com/abeb021/wave-connect/backend-services/pkg v0.0.0
+
+replace github.com/abeb021/wave-connect/backend-services/pkg => ../pkg

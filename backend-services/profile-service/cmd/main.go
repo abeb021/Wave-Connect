@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +12,9 @@ import (
 	"profile-service/internal/repository"
 	"profile-service/internal/service"
 	"syscall"
+
+	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
+	pkgmiddleware "github.com/abeb021/wave-connect/backend-services/pkg/middleware"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -25,55 +27,61 @@ func main() {
 	defer cancel()
 	cfg := config.Load()
 
+	log := logger.New("profile-service")
+
 	//migrations
 	m, err := migrate.New("file://migrations", cfg.DatabaseURL())
 	if err != nil {
-		log.Fatalf("migrate setup: %v", err)
+		log.Error("migrate setup", "error", err)
+		os.Exit(1)
 	}
 	defer m.Close()
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		log.Fatalf("migrate up: %v", err)
+		log.Error("migrate up", "error", err)
+		os.Exit(1)
 	}
 
 	//db pool connection
 	dbPool, err := repository.NewPool(ctx, cfg.DatabaseURL())
 	if err != nil {
-		log.Fatalf("db pool: %v", err)
+		log.Error("db pool", "error", err)
+		os.Exit(1)
 	}
 	defer dbPool.Close()
 
 	//backend architecture setup
 	repo := repository.NewRepository(dbPool)
 	producer, err := profilekafka.NewProducer(cfg.KafkaBroker)
-	if err != nil{
-		log.Fatal("kafka producer", err)
+	if err != nil {
+		log.Error("kafka producer", "error", err)
+		os.Exit(1)
 	}
 	defer producer.Close()
 	srv := service.NewService(repo, producer)
 	h := handlers.NewHandler(srv)
-	
-	// Kafka consumer 
+
+	// Kafka consumer
 	consumer, err := profilekafka.NewConsumer(cfg.KafkaBroker, "profile-service", repo)
-	if err != nil{
-		log.Fatalf("kafka consumer: %v\n", err)
+	if err != nil {
+		log.Error("kafka consumer", "error", err)
+		os.Exit(1)
 	}
 	defer consumer.Close()
 
-	go func (){
-		log.Println("starting kafka consumer")
-		if err := consumer.Start(ctx, []string{"user-registered"}); err != nil{
-			log.Printf("consumer stopped")
+	go func() {
+		log.Info("starting kafka consumer")
+		if err := consumer.Start(ctx, []string{"user-registered"}); err != nil {
+			log.Error("consumer stopped", "error", err)
 		}
 	}()
-
 
 	//routing
 	r := http.NewServeMux()
 	h.RegisterRoutes(r)
 
 	GlobalMiddleware := middleware.Chain(
-		middleware.LoggingMiddleware,
+		pkgmiddleware.Logging(log),
 	)
 
 	handler := GlobalMiddleware(r)
@@ -84,10 +92,14 @@ func main() {
 	}
 
 	go func() {
-		log.Fatal(server.ListenAndServe())
+		log.Info("server starting", "addr", ":8084")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("server stopped", "error", err)
+		}
 	}()
 
 	down := make(chan os.Signal, 1)
 	signal.Notify(down, syscall.SIGTERM, syscall.SIGINT)
 	<-down
+	log.Info("shutting down")
 }

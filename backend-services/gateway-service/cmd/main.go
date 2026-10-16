@@ -6,7 +6,8 @@ import (
 	"gateway-service/internal/config"
 	"gateway-service/internal/service"
 	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
-	"log"
+	pkgmiddleware "github.com/abeb021/wave-connect/backend-services/pkg/middleware"
+
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,8 @@ import (
 )
 
 func main() {
+	log := logger.New("gateway-service")
+
 	cfg := config.Load()
 
 	service := service.NewService(
@@ -30,7 +33,7 @@ func main() {
 
 	handler := middleware.Chain(
 		middleware.CorsMiddleware,
-		middleware.LoggingMiddleware,
+		pkgmiddleware.Logging(log),
 	)(mux)
 
 	server := http.Server{
@@ -39,10 +42,14 @@ func main() {
 	}
 
 	go func() {
-		log.Fatal(server.ListenAndServe())
+		log.Info("server starting", "addr", ":8080")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("server stopped", "error", err)
+		}
 	}()
 
 	down := make(chan os.Signal, 1)
 	signal.Notify(down, syscall.SIGTERM, syscall.SIGINT)
 	<-down
+	log.Info("shutting down")
 }

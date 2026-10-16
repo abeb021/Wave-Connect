@@ -1,0 +1,10 @@
+go 1.26.8
+
+use (
+	./auth-service
+	./chat-service
+	./feed-service
+	./gateway-service
+	./pkg
+	./profile-service
+)

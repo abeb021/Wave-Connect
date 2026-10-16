@@ -9,11 +9,13 @@ import (
 	"auth-service/internal/service"
 	"auth-service/pkg/jwt"
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
+	pkgmiddleware "github.com/abeb021/wave-connect/backend-services/pkg/middleware"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -26,21 +28,26 @@ func main() {
 	defer cancel()
 	cfg := config.Load()
 
+	log := logger.New("auth-service")
+
 	//migrations
 	m, err := migrate.New("file://migrations", cfg.DatabaseURL())
 	if err != nil {
-		log.Fatalf("migrate setup: %v", err)
+		log.Error("migrate setup", "error", err)
+		os.Exit(1)
 	}
 	defer m.Close()
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		log.Fatalf("migrate up: %v", err)
+		log.Error("migrate up", "error", err)
+		os.Exit(1)
 	}
 
 	//db pool connection
 	dbPool, err := repository.NewPool(ctx, cfg.DatabaseURL())
 	if err != nil {
-		log.Fatalf("db pool: %v", err)
+		log.Error("db pool", "error", err)
+		os.Exit(1)
 	}
 	defer dbPool.Close()
 
@@ -49,8 +56,9 @@ func main() {
 	//backend architecture setup
 	repo := repository.NewRepository(dbPool)
 	producer, err := kafka.NewProducer(cfg.KafkaBroker)
-	if err != nil{
-		log.Fatal("kafka producer", err)
+	if err != nil {
+		log.Error("kafka producer", "error", err)
+		os.Exit(1)
 	}
 	defer producer.Close()
 	srv := service.NewService(repo, auth, producer)
@@ -65,7 +73,7 @@ func main() {
 	r.HandleFunc("DELETE /api/auth/", h.DeleteUser)
 
 	GlobalMiddleware := middleware.Chain(
-		middleware.LoggingMiddleware,
+		pkgmiddleware.Logging(log),
 	)
 
 	handler := GlobalMiddleware(r)
@@ -76,10 +84,14 @@ func main() {
 	}
 
 	go func() {
-		log.Fatal(server.ListenAndServe())
+		log.Info("server starting", "addr", ":8081")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("server stopped", "error", err)
+		}
 	}()
 
 	down := make(chan os.Signal, 1)
 	signal.Notify(down, syscall.SIGTERM, syscall.SIGINT)
 	<-down
+	log.Info("shutting down")
 }

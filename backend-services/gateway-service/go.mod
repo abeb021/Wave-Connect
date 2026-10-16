@@ -1,6 +1,6 @@
 module gateway-service
 
-go 1.26.1
+go 1.26.8
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -21,3 +21,7 @@ require (
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 )
+
+require github.com/abeb021/wave-connect/backend-services/pkg v0.0.0
+
+replace github.com/abeb021/wave-connect/backend-services/pkg => ../pkg
