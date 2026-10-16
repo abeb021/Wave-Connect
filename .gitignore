@@ -5,3 +5,4 @@
 
 !.gitignore
 !.gitattributes
+!k8s.yaml
