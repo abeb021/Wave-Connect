@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 )
 
 type Handler struct {
@@ -33,6 +35,8 @@ func (h *Handler) CreatePublication(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create publication", http.StatusInternalServerError)
 		return
 	}
+
+	metrics.FeedPublicationsTotal.Inc()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

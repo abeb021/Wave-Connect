@@ -8,6 +8,8 @@ import (
 	
 	"profile-service/internal/domain"
 
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -120,6 +122,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to update profile", http.StatusInternalServerError)
 		return
 	}
+	metrics.ProfileUpdatesTotal.Inc()
 
 	w.WriteHeader(http.StatusNoContent)
 }
