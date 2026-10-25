@@ -16,6 +16,10 @@ spec:
     metadata:
       labels:
         app: auth-db
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: postgres
@@ -29,6 +33,13 @@ spec:
           value: "auth_db"
         ports:
         - containerPort: 5432
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter
+        env:
+        - name: DATA_SOURCE_NAME
+          value: "postgresql://postgres:postgres@localhost:5432/auth_db?sslmode=disable"
+        ports:
+        - containerPort: 9187
 ---
 apiVersion: v1
 kind: Service
@@ -231,6 +242,10 @@ spec:
     metadata:
       labels:
         app: auth-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: auth
@@ -253,6 +268,7 @@ spec:
           value: "kafka:9092"
         ports:
         - containerPort: 8081
+        - containerPort: 9090
 ---
 apiVersion: v1
 kind: Service
@@ -280,6 +296,10 @@ spec:
     metadata:
       labels:
         app: chat-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: chat
@@ -298,6 +318,7 @@ spec:
           value: "chat_db"
         ports:
         - containerPort: 8082
+        - containerPort: 9090
 ---
 apiVersion: v1
 kind: Service
@@ -325,6 +346,10 @@ spec:
     metadata:
       labels:
         app: feed-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: feed
@@ -345,6 +370,7 @@ spec:
           value: "kafka:9092"
         ports:
         - containerPort: 8083
+        - containerPort: 9090
 ---
 apiVersion: v1
 kind: Service
@@ -372,6 +398,10 @@ spec:
     metadata:
       labels:
         app: profile-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: profile
@@ -392,6 +422,7 @@ spec:
           value: "kafka:9092"
         ports:
         - containerPort: 8084
+        - containerPort: 9090
 ---
 apiVersion: v1
 kind: Service
@@ -419,6 +450,10 @@ spec:
     metadata:
       labels:
         app: gateway-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: gateway
@@ -437,6 +472,7 @@ spec:
           value: "http://profile-service:8084"
         ports:
         - containerPort: 8080
+        - containerPort: 9090
 ---
 apiVersion: v1
 kind: Service

@@ -5,6 +5,8 @@ import (
 	"auth-service/internal/service"
 	"encoding/json"
 	"net/http"
+	
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 )
 
 type Handler struct {
@@ -48,16 +50,21 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	token, err := h.Srv.Login(r.Context(), &usrReq)
 	if err != nil {
 		if err == domain.ErrWrongPassword {
+			metrics.AuthLoginsTotal.WithLabelValues("failed").Inc()
 			http.Error(w, domain.ErrWrongPassword.Error(), http.StatusBadRequest)
 			return
 		}
 		if err == domain.ErrUserNotFound {
+			metrics.AuthLoginsTotal.WithLabelValues("failed").Inc()
 			http.Error(w, domain.ErrUserNotFound.Error(), http.StatusNotFound)
 			return
 		}
+		// database failed not the insuccesfull login
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	metrics.AuthLoginsTotal.WithLabelValues("success").Inc()
 
 	w.Header().Set("Authorization", "Bearer "+token)
 	w.WriteHeader(http.StatusAccepted)

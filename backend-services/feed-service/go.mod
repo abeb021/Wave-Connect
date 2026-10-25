@@ -1,6 +1,6 @@
 module feed-service
 
-go 1.26.1
+go 1.26.8
 
 require (
 	github.com/confluentinc/confluent-kafka-go/v2 v2.14.1
@@ -30,9 +30,10 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 )
+
 require github.com/abeb021/wave-connect/backend-services/pkg v0.0.0
 
 replace github.com/abeb021/wave-connect/backend-services/pkg => ../pkg

@@ -4,6 +4,8 @@ import (
 	"chat-service/internal/domain"
 	"chat-service/internal/repository"
 	"context"
+	
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 )
 
 type Service struct {
@@ -17,6 +19,7 @@ func NewService(repo *repository.Repository) *Service {
 }
 
 func (s *Service) CreateMessage(ctx context.Context, msg *domain.MessageRequest) (*domain.Message, error) {
+	metrics.ChatMessagesTotal.Inc()
 	return s.Repo.CreateMessage(ctx, msg)
 }
 

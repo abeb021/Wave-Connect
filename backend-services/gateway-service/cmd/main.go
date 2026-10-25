@@ -5,6 +5,9 @@ import (
 	"gateway-service/api/middleware"
 	"gateway-service/internal/config"
 	"gateway-service/internal/service"
+
+
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
 	pkgmiddleware "github.com/abeb021/wave-connect/backend-services/pkg/middleware"
 
@@ -16,6 +19,8 @@ import (
 
 func main() {
 	log := logger.New("gateway-service")
+
+	metrics.InitBusinessMetrics()
 
 	cfg := config.Load()
 
@@ -45,6 +50,12 @@ func main() {
 		log.Info("server starting", "addr", ":8080")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("server stopped", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := metrics.Serve(":9090"); err != nil {
+			log.Error("metrics server stopped", "error", err)
 		}
 	}()
 

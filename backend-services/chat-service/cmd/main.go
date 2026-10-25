@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 	pkgmiddleware "github.com/abeb021/wave-connect/backend-services/pkg/middleware"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -28,6 +29,7 @@ func main() {
 	cfg := config.Load()
 
 	log := logger.New("chat-service")
+	metrics.InitBusinessMetrics()
 
 	//migrations
 	m, err := migrate.New("file://migrations", cfg.DatabaseURL())
@@ -89,6 +91,13 @@ func main() {
 		log.Info("server starting", "addr", ":8082")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("server stopped", "error", err)
+		}
+	}()
+
+	go func() {
+		log.Info("metrics starting", "addr", ":9090")
+		if err := metrics.Serve(":9090"); err != nil {
+			log.Error("metrics server stopped", "error", err)
 		}
 	}()
 
