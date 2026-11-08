@@ -6,19 +6,23 @@ import (
 	"gateway-service/internal/config"
 	"gateway-service/internal/service"
 
-
-	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 	pkgmiddleware "github.com/abeb021/wave-connect/backend-services/pkg/middleware"
 
+	"flag"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 func main() {
 	log := logger.New("gateway-service")
+
+	sloService := flag.String("slo", "gateway", "service layer name for SLI/TBSLO metrics")
+	flag.Parse()
 
 	metrics.InitBusinessMetrics()
 
@@ -54,7 +58,10 @@ func main() {
 	}()
 
 	go func() {
-		if err := metrics.Serve(":9090"); err != nil {
+		// Пробер проверяет сам gateway: POST /api/auth/login без тела даёт 400,
+		// то есть gateway жив и проксирует auth-service.
+		if err := metrics.ServeWithProber(":9090", *sloService, "http://127.0.0.1:8080/api/auth/login",
+			time.Minute, log); err != nil {
 			log.Error("metrics server stopped", "error", err)
 		}
 	}()

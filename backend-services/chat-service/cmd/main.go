@@ -8,10 +8,12 @@ import (
 	"chat-service/internal/repository"
 	"chat-service/internal/service"
 	"context"
+	"flag"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
 	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
@@ -29,6 +31,10 @@ func main() {
 	cfg := config.Load()
 
 	log := logger.New("chat-service")
+
+	sloService := flag.String("slo", "chat", "service layer name for SLI/TBSLO metrics")
+	flag.Parse()
+
 	metrics.InitBusinessMetrics()
 
 	//migrations
@@ -60,31 +66,31 @@ func main() {
 	ws := websocket.NewWSHandler(srv, hub)
 
 	//routing
-	r := http.NewServeMux()
+	api := http.NewServeMux()
 
+	//api.HandleFunc("POST /api/chat/", h.CreateMessage)
+	api.HandleFunc("GET /api/chat/conversation", h.GetConversation)
+	api.HandleFunc("GET /api/chat/conversation/{peerID}", h.GetConversationWithPeer)
+	api.HandleFunc("GET /api/chat/{id}", h.GetMessage)
+	api.HandleFunc("PUT /api/chat/{id}", h.UpdateMessage)
+	api.HandleFunc("DELETE /api/chat/{id}", h.DeleteMessage)
+
+	//WebSocket implementation in dev
+	api.HandleFunc("GET /api/chat/ws", ws.ServeWS)
+
+	// /health обслуживается отдельно и вне SLI.
+	r := http.NewServeMux()
 	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})
-
-	//r.HandleFunc("POST /api/chat/", h.CreateMessage)
-	r.HandleFunc("GET /api/chat/conversation", h.GetConversation)
-	r.HandleFunc("GET /api/chat/conversation/{peerID}", h.GetConversationWithPeer)
-	r.HandleFunc("GET /api/chat/{id}", h.GetMessage)
-	r.HandleFunc("PUT /api/chat/{id}", h.UpdateMessage)
-	r.HandleFunc("DELETE /api/chat/{id}", h.DeleteMessage)
-
-	//WebSocket implementation in dev
-	r.HandleFunc("GET /api/chat/ws", ws.ServeWS)
-
-	GlobalMiddleware := middleware.Chain(
+	r.Handle("/", middleware.Chain(
+		func(next http.Handler) http.Handler { return metrics.Track(*sloService, next) },
 		pkgmiddleware.Logging(log),
-	)
-
-	handler := GlobalMiddleware(r)
+	)(api))
 
 	server := http.Server{
 		Addr:    ":8082",
-		Handler: handler,
+		Handler: r,
 	}
 
 	go func() {
@@ -96,7 +102,8 @@ func main() {
 
 	go func() {
 		log.Info("metrics starting", "addr", ":9090")
-		if err := metrics.Serve(":9090"); err != nil {
+		if err := metrics.ServeWithProber(":9090", *sloService, "http://127.0.0.1:8082/health",
+			time.Minute, log); err != nil {
 			log.Error("metrics server stopped", "error", err)
 		}
 	}()

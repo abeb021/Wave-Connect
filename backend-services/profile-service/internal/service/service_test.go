@@ -63,4 +63,20 @@ func TestGetProfileSuccess(t *testing.T) {
 	svc := NewService(repo, &mockProducer{})
 	prof, err := svc.GetProfile(context.Background(), "id123")
 
+	assert.NoError(t, err)
+	assert.Equal(t, "id123", prof.ID)
+	assert.Equal(t, "testuser", prof.Username)
+}
+
+func TestGetProfileError(t *testing.T) {
+	repo := &mockRepo{
+		GetProfileMock: func(ctx context.Context, id string) (*domain.Profile, error) {
+			return nil, domain.ErrProfileNotFound
+		},
+	}
+
+	svc := NewService(repo, &mockProducer{})
+	_, err := svc.GetProfile(context.Background(), "missing")
+
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
 }

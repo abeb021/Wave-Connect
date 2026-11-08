@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
@@ -23,7 +24,7 @@ type ProfileRepository interface {
 }
 
 type UserCreatedEvent struct {
-	UserID   string `json:"user_id"`
+	UserID string `json:"user_id"`
 }
 
 func NewConsumer(broker, groupID string, repo ProfileRepository) (*Consumer, error) {
@@ -46,7 +47,7 @@ func (c *Consumer) Close() {
 
 func (c *Consumer) Start(ctx context.Context, topics []string) error {
 	err := c.kr.SubscribeTopics(topics, nil)
-	if err != nil{
+	if err != nil {
 		return err
 	}
 
@@ -57,7 +58,7 @@ func (c *Consumer) Start(ctx context.Context, topics []string) error {
 			return ctx.Err()
 		default:
 			ev := c.kr.Poll(100)
-			if ev == nil{
+			if ev == nil {
 				continue
 			}
 
@@ -75,7 +76,7 @@ func (c *Consumer) Start(ctx context.Context, topics []string) error {
 
 func (c *Consumer) handleMessage(msg *kafka.Message) {
 	var event UserCreatedEvent
-	if err := json.Unmarshal(msg.Value, &event); err != nil{
+	if err := json.Unmarshal(msg.Value, &event); err != nil {
 		log.Printf("failed to unmarshall event: %v\n", err)
 		return
 	}
@@ -83,25 +84,29 @@ func (c *Consumer) handleMessage(msg *kafka.Message) {
 	eventID := msg.TopicPartition.String()
 
 	processed, err := c.repo.IsEventProcessed(context.Background(), eventID)
-	if err != nil{
+	if err != nil {
 		log.Printf("failed to check event: %v\n", err)
 		return
 	}
-	if processed{
+	if processed {
 		return
 	}
 
-	if err := c.repo.CreateProfileByID(context.Background(), event.UserID); err != nil{
+	if err := c.repo.CreateProfileByID(context.Background(), event.UserID); err != nil {
+		metrics.KafkaEventsProcessed.WithLabelValues("profile", "user-registered", "failed").Inc()
 		log.Printf("failed to update profile: %v\n", err)
 		return
 	}
 
-	if err := c.repo.MarkEventProcessed(context.Background(), eventID, "user.registered"); err != nil{
+	if err := c.repo.MarkEventProcessed(context.Background(), eventID, "user.registered"); err != nil {
+		metrics.KafkaEventsProcessed.WithLabelValues("profile", "user-registered", "failed").Inc()
 		log.Printf("failed to update mark event: %v\n", err)
 		return
 	}
 
-	if _, err := c.kr.CommitMessage(msg); err != nil{
+	metrics.KafkaEventsProcessed.WithLabelValues("profile", "user-registered", "processed").Inc()
+
+	if _, err := c.kr.CommitMessage(msg); err != nil {
 		log.Printf("failed to commit offset: %v\n", err)
 	}
 }

@@ -1,0 +1,178 @@
+# SLI / SLO / SLA для Wave Connect — recording rules для VictoriaMetrics.
+#
+# ВАЖНО: это НЕ файл для `/api/v1/import/prometheus` (там ожидаются сэмплы,
+# а не правила) и НЕ Prometheus-формат с `groups:`. Это правила для vmalert.
+#
+# Вариант A (рекомендуемый) — vmalert из чарта:
+#   helm install vmalert vm/victoria-metrics-alert \
+#     --set server.datasource.url=http://vm-single...:8428 \
+#     --set server.remoteWrite.url=http://vm-single...:8428 \
+#     --set-file rule.templates.<name>=slo/rules.txt
+#
+# Вариант B — без vmalert: выражения ниже вводятся в vmui как есть,
+#   просто без имени `wave:...` (см. Отчёт.md, раздел 6).
+#
+# Метрики-источники:
+#   wave_slo_requests_total{service,class,reason}  class: good|neutral|bad   — RBSLO
+#   wave_slo_window_good{service,window} / wave_slo_window_total{...}         — TBSLO (пробер)
+#   wave_slo_request_duration_seconds_bucket{service,class}                   — latency SLI
+#   wave_auth_logins_total{status}                                            — бизнес-исход логинов
+#   wave_feed_publications_total                                             — публикации
+#   wave_chat_messages_total                                                 — сообщения (после БД)
+#   wave_profile_updates_total                                               — обновления профиля
+#   wave_kafka_events_processed_total{service,topic,status}                   — доставка событий
+
+# ======================================================================
+# SLI — RBSLO (доля не-5xx запросов)
+# ======================================================================
+record: wave:sli_auth_rbslo:ratio30d
+expr: |
+  1 - (
+    sum(increase(wave_slo_requests_total{service="auth",class="bad"}[30d]))
+    /
+    clamp_min(sum(increase(wave_slo_requests_total{service="auth"}[30d])), 1)
+  )
+
+record: wave:sli_feed_rbslo:ratio30d
+expr: |
+  1 - (
+    sum(increase(wave_slo_requests_total{service="feed",class="bad"}[30d]))
+    /
+    clamp_min(sum(increase(wave_slo_requests_total{service="feed"}[30d])), 1)
+  )
+
+record: wave:sli_chat_rbslo:ratio30d
+expr: |
+  1 - (
+    sum(increase(wave_slo_requests_total{service="chat",class="bad"}[30d]))
+    /
+    clamp_min(sum(increase(wave_slo_requests_total{service="chat"}[30d])), 1)
+  )
+
+# «Сейчас» — для дашборда и демонстрации.
+record: wave:sli_rbslo_ratio:ratio5m
+expr: |
+  1 - (
+    sum by (service) (rate(wave_slo_requests_total{class="bad"}[5m]))
+    /
+    clamp_min(sum by (service) (rate(wave_slo_requests_total[5m])), 1e-9)
+  )
+
+# Разбор инцидента: какие именно 5xx и почему.
+record: wave:sli_rbslo_bad_by_reason:ratio5m
+expr: sum by (service, reason) (rate(wave_slo_requests_total{class="bad"}[5m]))
+
+# ======================================================================
+# SLI — TBSLO (доля хороших минут)
+# ======================================================================
+record: wave:sli_tbslo:ratio5m
+expr: |
+  sum by (service) (wave_slo_window_good{window="5m"})
+  /
+  clamp_min(sum by (service) (wave_slo_window_total{window="5m"}), 1)
+
+record: wave:sli_tbslo:ratio30m
+expr: |
+  sum by (service) (wave_slo_window_good{window="30m"})
+  /
+  clamp_min(sum by (service) (wave_slo_window_total{window="30m"}), 1)
+
+record: wave:sli_tbslo:ratio1h
+expr: |
+  sum by (service) (wave_slo_window_good{window="1h"})
+  /
+  clamp_min(sum by (service) (wave_slo_window_total{window="1h"}), 1)
+
+# ======================================================================
+# SLI — latency (feed)
+# ======================================================================
+record: wave:sli_feed_latency_p95:seconds30d
+expr: |
+  histogram_quantile(0.95,
+    sum by (le) (increase(wave_slo_request_duration_seconds_bucket{service="feed",class="good"}[30d]))
+  )
+
+record: wave:sli_feed_latency_fast:ratio30d
+expr: |
+  sum(increase(wave_slo_request_duration_seconds_bucket{service="feed",class="good",le="0.3"}[30d]))
+  /
+  clamp_min(sum(increase(wave_slo_request_duration_seconds_count{service="feed",class="good"}[30d])), 1)
+
+# ======================================================================
+# SLO — remaining (остаток бюджета) и burn rate
+# remaining = 1  → бюджет целый
+# remaining = 0  → бюджет исчерпан (SLO ровно на границе)
+# remaining < 0  → SLO нарушен
+# ======================================================================
+record: wave:slo_auth_remaining
+expr: 1 - (1 - wave:sli_auth_rbslo:ratio30d) / (1 - 0.99)
+
+record: wave:slo_feed_remaining
+expr: 1 - (1 - wave:sli_feed_rbslo:ratio30d) / (1 - 0.995)
+
+record: wave:slo_chat_remaining
+expr: 1 - (1 - wave:sli_chat_rbslo:ratio30d) / (1 - 0.995)
+
+record: wave:slo_feed_latency_remaining
+expr: 1 - (1 - wave:sli_feed_latency_fast:ratio30d) / (1 - 0.95)
+
+# Короткое окно для демо: доля ошибок за час (0 = здорово, 0.05 = 5% ошибок).
+record: wave:slo_error_ratio_1h
+expr: 1 - wave:sla_ratio_1h
+
+# Burn rate: во сколько раз быстрее нормы тратится бюджет.
+# 1 → бюджет кончится ровно за 30d; 14.4 → за ~2 дня уйдёт 2% месячного бюджета.
+record: wave:burn_auth:ratio5m
+expr: |
+  rate(wave_slo_requests_total{service="auth",class="bad"}[5m])
+  /
+  clamp_min(rate(wave_slo_requests_total{service="auth"}[5m]), 1e-9)
+  /
+  0.01
+
+record: wave:burn_feed:ratio5m
+expr: |
+  rate(wave_slo_requests_total{service="feed",class="bad"}[5m])
+  /
+  clamp_min(rate(wave_slo_requests_total{service="feed"}[5m]), 1e-9)
+  /
+  0.005
+
+record: wave:burn_chat:ratio5m
+expr: |
+  rate(wave_slo_requests_total{service="chat",class="bad"}[5m])
+  /
+  clamp_min(rate(wave_slo_requests_total{service="chat"}[5m]), 1e-9)
+  /
+  0.005
+
+record: wave:slo_probe_up:min
+expr: max by (service) (wave_slo_probe_up)
+
+# ======================================================================
+# SLA — внешнее обещание
+# strict   = min(SLO)          → 99.0% (защищает слабейшее звено)
+# weighted = Σ good / Σ all    → фактическая доля успешных ко всему приложению
+# ======================================================================
+record: wave:sla_strict_target
+expr: min(vector(0.99), vector(0.995), vector(0.995))
+
+record: wave:sla_ratio_30d
+expr: |
+  1 - (
+    sum(increase(wave_slo_requests_total{class="bad"}[30d]))
+    /
+    clamp_min(sum(increase(wave_slo_requests_total[30d])), 1)
+  )
+
+record: wave:sla_ratio_1h
+expr: |
+  1 - (
+    sum(increase(wave_slo_requests_total{class="bad"}[1h]))
+    /
+    clamp_min(sum(increase(wave_slo_requests_total[1h])), 1)
+  )
+
+# Соблюдён ли SLA прямо сейчас (1 = да, 0 = нет) — удобно для графика-«светофора».
+record: wave:sla_met:bool
+expr: (wave:sla_ratio_30d >= wave:sla_strict_target) or vector(0)

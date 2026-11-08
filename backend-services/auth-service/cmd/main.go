@@ -9,10 +9,12 @@ import (
 	"auth-service/internal/service"
 	"auth-service/pkg/jwt"
 	"context"
+	"flag"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
 	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
@@ -30,7 +32,10 @@ func main() {
 	cfg := config.Load()
 
 	log := logger.New("auth-service")
-    
+
+	sloService := flag.String("slo", "auth", "service layer name for SLI/TBSLO metrics")
+	flag.Parse()
+
 	metrics.InitBusinessMetrics()
 
 	//migrations
@@ -68,22 +73,26 @@ func main() {
 	h := handlers.NewHandler(srv)
 
 	//routing
+	api := http.NewServeMux()
+	api.HandleFunc("POST /api/auth/register", h.Register)
+	api.HandleFunc("POST /api/auth/login", h.Login)
+	api.HandleFunc("GET /api/auth/id/", h.GetUserById)
+	api.HandleFunc("DELETE /api/auth/", h.DeleteUser)
+
+	// /health обслуживается отдельно и вне SLI: проверка живости не должна
+	// портить метрику доступности бизнес-трафика.
 	r := http.NewServeMux()
-
-	r.HandleFunc("POST /api/auth/register", h.Register)
-	r.HandleFunc("POST /api/auth/login", h.Login)
-	r.HandleFunc("GET /api/auth/id/", h.GetUserById)
-	r.HandleFunc("DELETE /api/auth/", h.DeleteUser)
-
-	GlobalMiddleware := middleware.Chain(
+	r.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})
+	r.Handle("/", middleware.Chain(
+		func(next http.Handler) http.Handler { return metrics.Track(*sloService, next) },
 		pkgmiddleware.Logging(log),
-	)
-
-	handler := GlobalMiddleware(r)
+	)(api))
 
 	server := http.Server{
 		Addr:    ":8081",
-		Handler: handler,
+		Handler: r,
 	}
 
 	go func() {
@@ -93,12 +102,13 @@ func main() {
 		}
 	}()
 
-    go func() {
-        log.Info("metrics starting", "addr", ":9090")
-        if err := metrics.Serve(":9090"); err != nil {
-            log.Error("metrics server stopped", "error", err)
-        }
-    }()
+	go func() {
+		log.Info("metrics starting", "addr", ":9090")
+		if err := metrics.ServeWithProber(":9090", *sloService, "http://127.0.0.1:8081/health",
+			time.Minute, log); err != nil {
+			log.Error("metrics server stopped", "error", err)
+		}
+	}()
 
 	down := make(chan os.Signal, 1)
 	signal.Notify(down, syscall.SIGTERM, syscall.SIGINT)

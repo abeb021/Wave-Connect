@@ -4,7 +4,7 @@ import (
 	"chat-service/internal/domain"
 	"chat-service/internal/repository"
 	"context"
-	
+
 	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
 )
 
@@ -19,8 +19,14 @@ func NewService(repo *repository.Repository) *Service {
 }
 
 func (s *Service) CreateMessage(ctx context.Context, msg *domain.MessageRequest) (*domain.Message, error) {
+	saved, err := s.Repo.CreateMessage(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+	// Считаем только реально сохранённые сообщения: раньше метрика росла
+	// даже при упавшей БД и не годилась как SLI.
 	metrics.ChatMessagesTotal.Inc()
-	return s.Repo.CreateMessage(ctx, msg)
+	return saved, nil
 }
 
 func (s *Service) GetConversation(ctx context.Context, senderID string) ([]domain.Message, error) {

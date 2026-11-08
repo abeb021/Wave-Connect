@@ -37,6 +37,16 @@ var (
 			Help: "Total number of profile updates",
 		},
 	)
+
+	// 5. Обработанные Kafka-события (profile-service, feed-service).
+	// Лейбл status: "processed" | "failed" — исход обработки сообщения.
+	KafkaEventsProcessed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wave_kafka_events_processed_total",
+			Help: "Kafka events handled by consumers, by topic and outcome",
+		},
+		[]string{"service", "topic", "status"}, // topic: user-registered | profile-updates
+	)
 )
 
 func InitBusinessMetrics() {
@@ -44,4 +54,5 @@ func InitBusinessMetrics() {
 	prometheus.MustRegister(FeedPublicationsTotal)
 	prometheus.MustRegister(ChatMessagesTotal)
 	prometheus.MustRegister(ProfileUpdatesTotal)
+	prometheus.MustRegister(KafkaEventsProcessed)
 }

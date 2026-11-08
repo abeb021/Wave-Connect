@@ -251,6 +251,9 @@ spec:
       - name: auth
         image: auth-service:v1
         imagePullPolicy: IfNotPresent
+        # В образах нет ENTRYPOINT (только CMD ./main), а k8s `args` заменяет CMD.
+        # Поэтому первый элемент — бинарник, иначе под упадёт в RunContainerError.
+        args: ["./main", "-slo=auth"]
         env:
         - name: DB_HOST
           value: "auth-db"
@@ -305,6 +308,7 @@ spec:
       - name: chat
         image: chat-service:v1
         imagePullPolicy: IfNotPresent
+        args: ["./main", "-slo=chat"]
         env:
         - name: DB_HOST
           value: "chat-db"
@@ -355,6 +359,7 @@ spec:
       - name: feed
         image: feed-service:v1
         imagePullPolicy: IfNotPresent
+        args: ["./main", "-slo=feed"]
         env:
         - name: DB_HOST
           value: "feed-db"
@@ -407,6 +412,7 @@ spec:
       - name: profile
         image: profile-service:v1
         imagePullPolicy: IfNotPresent
+        args: ["./main", "-slo=profile"]
         env:
         - name: DB_HOST
           value: "profile-db"
@@ -459,6 +465,7 @@ spec:
       - name: gateway
         image: gateway-service:v1
         imagePullPolicy: IfNotPresent
+        args: ["./main", "-slo=gateway"]
         env:
         - name: JWT_SECRET
           value: "super_secret_jwt_key_dev"

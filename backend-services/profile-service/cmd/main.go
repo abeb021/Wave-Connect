@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"profile-service/internal/repository"
 	"profile-service/internal/service"
 	"syscall"
+	"time"
 
 	"github.com/abeb021/wave-connect/backend-services/pkg/logger"
 	"github.com/abeb021/wave-connect/backend-services/pkg/metrics"
@@ -29,6 +31,10 @@ func main() {
 	cfg := config.Load()
 
 	log := logger.New("profile-service")
+
+	sloService := flag.String("slo", "profile", "service layer name for SLI/TBSLO metrics")
+	flag.Parse()
+
 	metrics.InitBusinessMetrics()
 
 	//migrations
@@ -79,18 +85,22 @@ func main() {
 	}()
 
 	//routing
+	api := http.NewServeMux()
+	h.RegisterRoutes(api)
+
+	// /health обслуживается отдельно и вне SLI.
 	r := http.NewServeMux()
-	h.RegisterRoutes(r)
-
-	GlobalMiddleware := middleware.Chain(
+	r.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})
+	r.Handle("/", middleware.Chain(
+		func(next http.Handler) http.Handler { return metrics.Track(*sloService, next) },
 		pkgmiddleware.Logging(log),
-	)
-
-	handler := GlobalMiddleware(r)
+	)(api))
 
 	server := http.Server{
 		Addr:    ":8084",
-		Handler: handler,
+		Handler: r,
 	}
 
 	go func() {
@@ -102,7 +112,8 @@ func main() {
 
 	go func() {
 		log.Info("metrics starting", "addr", ":9090")
-		if err := metrics.Serve(":9090"); err != nil {
+		if err := metrics.ServeWithProber(":9090", *sloService, "http://127.0.0.1:8084/health",
+			time.Minute, log); err != nil {
 			log.Error("metrics server stopped", "error", err)
 		}
 	}()

@@ -12,18 +12,18 @@ type Producer struct {
 
 func NewProducer(broker string) (*Producer, error) {
 	p, err := kafka.NewProducer(&kafka.ConfigMap{
-		"bootstrap.servers":broker,
+		"bootstrap.servers": broker,
 	})
-	if err != nil{
+	if err != nil {
 		return nil, err
 	}
 
 	go func() {
-		for e := range p.Events(){
+		for e := range p.Events() {
 			switch ev := e.(type) {
 			//message is an error of a C kafka
 			case *kafka.Message:
-				if ev.TopicPartition.Error != nil{
+				if ev.TopicPartition.Error != nil {
 					log.Printf("Delivery failed: %v\n", ev.TopicPartition.Error)
 				} else {
 					log.Printf("Message delivered: %v\n", ev.TopicPartition)
@@ -38,22 +38,22 @@ func NewProducer(broker string) (*Producer, error) {
 	return &Producer{kp: p}, nil
 }
 
-func (p *Producer) Close(){
+func (p *Producer) Close() {
 	//wait 10 sec
 	p.kp.Flush(10 * 1000)
 	p.kp.Close()
 }
 
-func (p *Producer) Send(topic, key string, value []byte) error{
+func (p *Producer) Send(topic, key string, value []byte) error {
 	err := p.kp.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{
-			Topic: &topic,
+			Topic:     &topic,
 			Partition: kafka.PartitionAny,
 		},
-		Key: []byte(key),
+		Key:   []byte(key),
 		Value: value,
 	}, nil)
 	//chan is nil so it uses p.kp.Events() as a default channel
-	
+
 	return err
 }
