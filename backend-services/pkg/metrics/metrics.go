@@ -27,3 +27,10 @@ func ServeWithProber(addr, service, healthURL string, interval time.Duration, lo
 	NewProber(service, healthURL, interval, log).Run()
 	return Serve(addr)
 }
+
+// ServeWithProberMethod — как ServeWithProber, но с явным HTTP-методом.
+// Gateway пробуется через POST /api/auth/login: GET там отдаёт 405.
+func ServeWithProberMethod(addr, method, service, healthURL string, interval time.Duration, log *slog.Logger) error {
+	NewProberMethod(method, service, healthURL, interval, log).Run()
+	return Serve(addr)
+}

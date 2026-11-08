@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webhook-sink-src
+  namespace: monitoring
+data:
+  sink.py: |
+    import json
+    import sys
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    PORT = 9095
+
+
+    class Sink(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length)
+            print("\n" + "=" * 70, flush=True)
+            print(f"ALERTMANAGER POST  {self.path}", flush=True)
+            print("=" * 70, flush=True)
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                print(raw.decode("utf-8", "replace"), flush=True)
+            else:
+                print(f"status : {payload.get('status')}", flush=True)
+                print(f"group  : {payload.get('groupLabels')}", flush=True)
+                for a in payload.get("alerts", []):
+                    labels = a.get("labels", {})
+                    ann = a.get("annotations", {})
+                    print("-" * 70, flush=True)
+                    print(f"  {labels.get('alertname')}  [{labels.get('severity')}]", flush=True)
+                    print(f"  status   : {a.get('status')}", flush=True)
+                    print(f"  summary  : {ann.get('summary')}", flush=True)
+                    print(f"  startsAt : {a.get('startsAt')}", flush=True)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+
+        def log_message(self, *args):
+            pass
+
+
+    print(f"webhook sink listening on :{PORT}", flush=True)
+    HTTPServer(("", PORT), Sink).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-sink
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-sink
+  template:
+    metadata:
+      labels:
+        app: webhook-sink
+    spec:
+      containers:
+      - name: sink
+        image: python:3.12-alpine
+        command: ["python3", "/src/sink.py"]
+        ports:
+        - containerPort: 9095
+        volumeMounts:
+        - name: src
+          mountPath: /src
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+      volumes:
+      - name: src
+        configMap:
+          name: webhook-sink-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-sink
+  namespace: monitoring
+spec:
+  selector:
+    app: webhook-sink
+  ports:
+  - port: 9095
+    targetPort: 9095

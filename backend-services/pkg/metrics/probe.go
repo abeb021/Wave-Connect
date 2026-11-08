@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -26,6 +27,7 @@ type minuteBucket struct {
 type Prober struct {
 	service  string
 	probeURL string
+	method   string // GET для /health, POST для gateway (login без тела даёт 400)
 	interval time.Duration
 	log      *slog.Logger
 
@@ -51,7 +53,15 @@ var (
 )
 
 func NewProber(service, probeURL string, interval time.Duration, log *slog.Logger) *Prober {
-	return &Prober{service: service, probeURL: probeURL, interval: interval, log: log}
+	return &Prober{service: service, probeURL: probeURL, method: http.MethodGet, interval: interval, log: log}
+}
+
+// NewProberMethod — как NewProber, но с явным HTTP-методом.
+// Для gateway нужен POST: GET /api/auth/login отвечает 405.
+func NewProberMethod(method, service, probeURL string, interval time.Duration, log *slog.Logger) *Prober {
+	p := NewProber(service, probeURL, interval, log)
+	p.method = method
+	return p
 }
 
 // Run запускает пробер в фоне. Вызывается один раз из ServeWithProber.
@@ -63,16 +73,22 @@ func (p *Prober) Run() {
 		defer ticker.Stop()
 
 		now := time.Now()
-		p.observe(now, p.probe())
+		p.record(now, p.probe())
 		p.publish(now)
 
 		for {
 			now := <-ticker.C
-			p.observe(now, p.probe())
+			p.record(now, p.probe())
 			p.publish(now)
 			p.trim(now)
 		}
 	}()
+}
+
+// record сохраняет исход пробы: gauge для алертов и минуту для TBSLO.
+func (p *Prober) record(now time.Time, good bool) {
+	SLOProbeUp.WithLabelValues(p.service).Set(boolFloat(good))
+	p.observe(now, good)
 }
 
 // observe учитывает одну пробу в минутном бакете.
@@ -107,7 +123,7 @@ func (p *Prober) minuteGood(b minuteBucket) bool {
 }
 
 func (p *Prober) probe() bool {
-	req, err := http.NewRequest(http.MethodGet, p.probeURL, nil)
+	req, err := http.NewRequest(p.method, p.probeURL, nil)
 	if err != nil {
 		return false
 	}
@@ -119,8 +135,12 @@ func (p *Prober) probe() bool {
 	}
 	defer resp.Body.Close()
 
-	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
-	p.log.Info("slo probe", "service", p.service, "status", resp.StatusCode, "ok", ok)
+	// 4xx — живой сервис, который осознанно отказал (например, gateway
+	// на POST /api/auth/login без тела отвечает 400). Живость определяет
+	// способность ответить, а не код. Тот же принцип, что в Track/Classify.
+	class := Classify(resp.StatusCode)
+	ok := class != OutcomeBad
+	p.log.Info("slo probe", "service", p.service, "status", resp.StatusCode, "class", class, "ok", ok)
 	return ok
 }
 
@@ -141,7 +161,9 @@ func (p *Prober) publish(now time.Time) {
 			n++
 			g += boolToInt(p.minuteGood(*p.pending))
 		}
-		labels := prometheus.Labels{"service": p.service, "window": w.String()}
+		// window — сокращённое имя окна (5m, не 5m0s):
+		// запросы в rules.txt и демо используют window="5m".
+		labels := prometheus.Labels{"service": p.service, "window": shortWindow(w)}
 		SLOWindowTotal.With(labels).Set(float64(n))
 		SLOWindowGood.With(labels).Set(float64(g))
 	}
@@ -163,6 +185,18 @@ func boolFloat(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// shortWindow переводит 5m0s в 5m. Окно в лейбле должно совпадать
+// с тем, что написано в rules.txt и query.txt.
+func shortWindow(w time.Duration) string {
+	if w%time.Hour == 0 {
+		return fmt.Sprintf("%dh", int(w/time.Hour))
+	}
+	if w%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int(w/time.Minute))
+	}
+	return w.String()
 }
 
 func boolToInt(b bool) int {

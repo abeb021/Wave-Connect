@@ -60,8 +60,10 @@ func main() {
 	go func() {
 		// Пробер проверяет сам gateway: POST /api/auth/login без тела даёт 400,
 		// то есть gateway жив и проксирует auth-service.
-		if err := metrics.ServeWithProber(":9090", *sloService, "http://127.0.0.1:8080/api/auth/login",
-			time.Minute, log); err != nil {
+		// 4xx считается живым (Classify по 5xx, а не по 2xx/3xx) — иначе gateway
+		// навсегда висел бы в probe_up=0 и давал ложный WaveAllReplicasDown.
+		if err := metrics.ServeWithProberMethod(":9090", http.MethodPost, *sloService,
+			"http://127.0.0.1:8080/api/auth/login", time.Minute, log); err != nil {
 			log.Error("metrics server stopped", "error", err)
 		}
 	}()

@@ -45,21 +45,11 @@ receivers:
 #    Токен и chat_id НЕ хардкодим: подставляются из Secret.
 # ------------------------------------------------------------------
 - name: critical
-  telegram_configs:
-  - bot_token_file: /etc/alertmanager/secrets/telegram_token
-    chat_id: 0            # заменить на свой chat_id
-    parse_mode: HTML
-    message: |
-      <b>[CRITICAL] {{ .GroupLabels.alertname }}</b>
-      {{ range .Alerts }}
-      {{ .Annotations.summary }}
-      {{ .Annotations.description }}
-      Начало: {{ .StartsAt.Format "15:04:05" }}
-      {{ end }}
-
+  # Telegram выключен: chat_id/bot token задаются при реальном деплое.
+  # Для сдачи достаточно webhook (slo/webhook-sink.sh или webhook-sink-k8s.yaml).
   # Дублирование в webhook (echo-сервер) — если Telegram недоступен.
   webhook_configs:
-  - url: http://localhost:9095/alerts
+  - url: http://webhook-sink.monitoring.svc.cluster.local:9095/alerts
     send_resolved: true
 
 # ------------------------------------------------------------------
@@ -68,7 +58,7 @@ receivers:
 # ------------------------------------------------------------------
 - name: default
   webhook_configs:
-  - url: http://localhost:9095/alerts
+  - url: http://webhook-sink.monitoring.svc.cluster.local:9095/alerts
     send_resolved: true
 
 inhibit_rules:
