@@ -1,0 +1,38 @@
+# values для чарта prometheus-community/alertmanager (ДЗ №6).
+#
+#   helm install alertmanager prometheus-community/alertmanager \
+#     -n monitoring -f slo/alertmanager-values.yml
+#
+# Конфиг монтируется из Secret, созданного из slo/alertmanager.yml.
+# Секрет должен существовать ДО helm install (иначе под не стартует).
+
+replicaCount: 1     # minikube: HA не нужна, 2 реплики дают split-brain без gossip
+
+image:
+  repository: quay.io/prometheus/alertmanager
+  tag: v0.27.0
+
+config:
+  enabled: false    # конфиг приходит из existingSecret
+
+existingSecret: alertmanager-config
+
+persistence:
+  enabled: true     # silences должен пережить рестарт пода
+  size: 1Gi
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+service:
+  type: ClusterIP
+  port: 9093
+
+# UI на :9093/#/alerts — удобно для скриншота, доступ через port-forward.
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,143 @@
+# Алерты для Wave Connect — правила для vmalert (ДЗ №6).
+#
+# Формат тот же, что в rules.txt: vmalert-правила, без `groups:`.
+# Подключается вторым шаблоном:
+#   --set-file rule.templates.slo=slo/rules.txt
+#   --set-file rule.templates.alerts=slo/alerts.txt
+#
+# Алерты ссылаются на recording rules из rules.txt (wave:burn_*, wave:sla_*).
+# Поэтому rules.txt и alerts.txt должны быть загружены ВМЕСТЕ.
+#
+# Без vmalert правила не проверить: `wave:burn_*` — записанные серии, а не выражения.
+
+# ======================================================================
+# 1. Fast burn — сервис жжёт error budget в 14.4 раза быстрее нормы.
+#
+# 14.4 — из SRE Workbook: при таком темпе 2% МЕСЯЧНОГО бюджета
+# сгорают за 2 дня. Окно 2m — чтобы успеть до того, как большая
+# часть бюджета потеряна, но не реагировать на одиночный 5xx.
+# ======================================================================
+alert: WaveFastBurnFeed
+expr: wave:burn_feed:ratio5m > 14.4
+for: 2m
+labels:
+  severity: critical
+  team: backend
+annotations:
+  summary: "feed жжёт бюджет в {{ $value | printf \"%.1f\" }}x от нормы"
+  description: "SLO feed (0.995/30d) нарушится через ~2 дня. Смотри wave:sli_rbslo_bad_by_reason:ratio5m — причина (bad_gateway = сервис мёртв, server_error = ошибка изнутри)."
+  runbook: "slo/demo.sh heal; kubectl -n default logs deploy/feed-service"
+
+alert: WaveFastBurnAuth
+expr: wave:burn_auth:ratio5m > 14.4
+for: 2m
+labels:
+  severity: critical
+  team: backend
+annotations:
+  summary: "auth жжёт бюджет в {{ $value | printf \"%.1f\" }}x от нормы"
+  description: "SLO auth (0.99/30d). auth — точка входа: пока он лежит, ни один пользователь не войдёт."
+  runbook: "slo/demo.sh heal; kubectl -n default logs deploy/auth-service"
+
+# ======================================================================
+# 2. Медленная утечка бюджета.
+#
+# Fast burn (всплеск) пропускает дрейф: 1% ошибок стабильно —
+# «fast» не сработает, а за месяц SLO сгорит. Окно 30m.
+# ======================================================================
+alert: WaveSlowBurnAuth
+expr: wave:burn_auth:ratio5m > 6
+for: 30m
+labels:
+  severity: warning
+  team: backend
+annotations:
+  summary: "auth стабильно деградирует: {{ $value | printf \"%.1f\" }}x бюджета"
+  description: "Ошибки не всплеском, а фоном 30 минут. Часто это не 5xx, а рост latency/таймаутов."
+
+# ======================================================================
+# 3. Gateway не может проксировать сервис (502).
+#
+# ВАЖНО (см. §5.9 отчёта): пробер живёт в поде сервиса. Убитый под
+# (scale 0) не отдаёт /metrics → wave_slo_probe_up просто ИСЧЕЗАЕТ
+# из выдачи, условие == 0 не сработает. Единственный, кто видит
+# поломку downstream — gateway: он живой и возвращает 502.
+# ======================================================================
+alert: WaveServiceUnreachable
+expr: |
+  sum by (service) (rate(wave_slo_requests_total{reason="bad_gateway"}[5m])) > 0
+for: 1m
+labels:
+  severity: critical
+  team: backend
+annotations:
+  summary: "gateway не может дойти до {{ $labels.service }}"
+  description: "502 от gateway за последние 5 минут. Проверь реплики: kubectl -n default get pods -l app={{ $labels.service }}. Обычно scale 0 или CrashLoop."
+
+# Пробер отработал, но сервис мёртв на ВСЕХ живых репликах.
+# max by (service) — потому что у gateway 2 реплики, каждая шлёт свою серию.
+alert: WaveAllReplicasDown
+expr: |
+  max by (service) (wave_slo_probe_up) == 0
+for: 2m
+labels:
+  severity: critical
+  team: backend
+annotations:
+  summary: "все реплики {{ $labels.service }} не отвечают на /health"
+  description: "Пробер отработал и получил отказ. Это отличается от исчезновения метрики (см. WaveServiceUnreachable)."
+
+# ======================================================================
+# 4. Рантайм Go — аналог Spring actuator.
+#
+# go_goroutines меняется от нагрузки, поэтому абсолютный порог врёт:
+# нагрузочный тест поднимет значение и алерт сработает ложно.
+# Правило ловит УТЕЧКУ: горутины выросли и не вернулись за 15m.
+# 200 — запас от baseline 17 (без нагрузки) и от пиков demo.sh traffic.
+# ======================================================================
+alert: WaveGoroutineLeak
+expr: |
+  go_goroutines
+    > 200
+  and
+    go_goroutines
+    > 3 * avg_over_time(go_goroutines[1h] offset 1h)
+for: 15m
+labels:
+  severity: warning
+  team: backend
+annotations:
+  summary: "{{ $labels.pod }}: possible goroutine leak ({{ $value }})"
+  description: "Горутины выше 200 И в 3 раза выше своего уровня час назад. Типичная причина: незакрытое WebSocket-соединение в chat-service или горутина на каждый запрос без cancel."
+
+# ======================================================================
+# 5. Память процесса растёт и не возвращается (аналог jvm_memory_used_bytes).
+#
+# Порог 200 MiB: baseline ~21 MiB. Сравнение по значению на открытом
+# коннекте (le) — не требует rate(), работает и без истории 1h.
+# ======================================================================
+alert: WaveMemoryHigh
+expr: |
+  process_resident_memory_bytes
+    > 200 * 1024 * 1024
+for: 10m
+labels:
+  severity: warning
+  team: backend
+annotations:
+  summary: "{{ $labels.pod }}: RSS {{ $value | humanize1024 }}"
+  description: "Процесс держит более 200 MiB больше 10 минут. Если график после снятия нагрузки не идёт вниз — утечка, а не пик."
+
+# ======================================================================
+# Чего сознательно НЕТ:
+#
+# process_cpu_seconds_total — Counter, без rate() бесполезен; в minikube
+#   один под может съесть ядро на сборочных задачах и дать ложняк.
+#
+# wave_chat_messages_total / wave_feed_publications_total — бизнес-объём,
+#   а не здоровье. Падение числа сообщений ночью — норма, не инцидент.
+#
+# wave_slo_probe_up == 0 как единственный признак недоступности —
+#   не срабатывает при scale 0 (серия исчезает). Нужен duplex:
+#   probe_up (сервис виден) + bad_gateway (сервис не проксируется).
+# ======================================================================

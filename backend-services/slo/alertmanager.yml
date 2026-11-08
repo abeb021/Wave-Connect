@@ -1,0 +1,85 @@
+# Alertmanager для Wave Connect (ДЗ №6).
+#
+# Схема: vmalert -> Alertmanager -> получатель.
+# vmalert считает условие, Alertmanager группирует и рассылает.
+#
+# Установка (вариант с чартом prometheus-community):
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm install alertmanager prometheus-community/alertmanager \
+#     -n monitoring --set config.existingSecret=""
+#   # затем конфиг ниже кладётся в Secret и монтируется
+#
+# Проверка конфига без запуска:
+#   amtool check-config alertmanager.yml
+#
+# vmalert должен знать адрес:
+#   -notifier.url=http://alertmanager.monitoring.svc:9093
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Дефолт: warning уходит тихо, critical — громко.
+  receiver: default
+  group_by: [alertname, service, severity]
+  group_wait: 30s        # подождать пачку, чтобы не слать 5 писем о 5 репликах
+  group_interval: 5m
+  repeat_interval: 4h    # повтор, если не потушен
+
+  routes:
+  # critical — сразу, повтор каждые 30m.
+  - matchers: ['severity="critical"']
+    receiver: critical
+    group_wait: 10s
+    repeat_interval: 30m
+
+  # warning — с задержкой: за 15m многое проходит само.
+  - matchers: ['severity="warning"']
+    receiver: default
+    group_wait: 2m
+    repeat_interval: 4h
+
+receivers:
+# ------------------------------------------------------------------
+# 1. CRITICAL. Telegram — удобно для скриншота «уведомление пришло».
+#    Токен и chat_id НЕ хардкодим: подставляются из Secret.
+# ------------------------------------------------------------------
+- name: critical
+  telegram_configs:
+  - bot_token_file: /etc/alertmanager/secrets/telegram_token
+    chat_id: 0            # заменить на свой chat_id
+    parse_mode: HTML
+    message: |
+      <b>[CRITICAL] {{ .GroupLabels.alertname }}</b>
+      {{ range .Alerts }}
+      {{ .Annotations.summary }}
+      {{ .Annotations.description }}
+      Начало: {{ .StartsAt.Format "15:04:05" }}
+      {{ end }}
+
+  # Дублирование в webhook (echo-сервер) — если Telegram недоступен.
+  webhook_configs:
+  - url: http://localhost:9095/alerts
+    send_resolved: true
+
+# ------------------------------------------------------------------
+# 2. WARNING. Только webhook в лог — чтобы не будить ночью.
+#    Для сдачи задания можно включить второй Telegram-канал.
+# ------------------------------------------------------------------
+- name: default
+  webhook_configs:
+  - url: http://localhost:9095/alerts
+    send_resolved: true
+
+inhibit_rules:
+# Если сервис целиком недоступен (WaveServiceUnreachable), нет смысла
+# слать десятки производных: burn rate, latency, memory по тем же подам.
+# Подавляем всё по тому же service, кроме самого корневого алерта.
+- source_matchers: ['alertname="WaveServiceUnreachable"']
+  target_matchers: ['severity=~"warning|critical"']
+  equal: [service]
+
+# Если все реплики мертвы, goroutine/memory по ним бессмысленны.
+- source_matchers: ['alertname="WaveAllReplicasDown"']
+  target_matchers: ['alertname=~"WaveGoroutineLeak|WaveMemoryHigh"']
+  equal: [service]
